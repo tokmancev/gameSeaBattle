@@ -6,6 +6,87 @@ int col_ship = 1;
 bool play = false;
 bool game_over = false;
 bool cpu_turn = false;
+bool showMenu = true;
+bool helpOn = false;
+string helpText;
+//--------------------------------------------------------------
+string ToUnicode(const wstring& str) {
+	string result;
+	result.resize(str.size());
+	for (int i = 0; i < str.length(); ++i) {
+		ofUTF8Append(result, str[i]);
+	}
+	return result;
+}
+
+typedef void(*OnClickType)();
+//**************Menu
+struct MenuItem {
+	static ofTrueTypeFont verdana14;
+	static int menuItemWidth;
+	static int menuItemHeight;
+	static bool firstTime;
+
+	OnClickType OnClick;
+	ofRectangle button;
+	string Name;
+	MenuItem() :OnClick(NULL){}
+	MenuItem(wstring name, int menu_x, int menu_y, OnClickType on_click);
+	void InitializeFont();
+	void draw();
+	bool includes(int x, int y);
+};
+int MenuItem::menuItemWidth = 100;
+int MenuItem::menuItemHeight = 50;
+bool MenuItem::firstTime = true;
+ofTrueTypeFont MenuItem::verdana14;
+
+bool MenuItem::includes(int x, int y) {
+	return button.inside(x, y);
+}
+
+void MenuItem::InitializeFont() {
+	if (!firstTime) return;
+	firstTime = false;
+	const string filename = "verdana.ttf";
+	const int fontSize = 14;
+	const bool antialiased = true;
+	const bool fullCharacterSet = true;
+	ofTrueTypeFontSettings settings(filename, fontSize);
+	settings.antialiased = antialiased;
+	settings.ranges = {
+		ofUnicode::Latin1Supplement,
+		ofUnicode::Cyrillic
+	};
+	verdana14.load(settings);
+	assert(verdana14.isLoaded());
+	verdana14.setLineHeight(18.0f);
+	verdana14.setLetterSpacing(1.037);
+}
+
+MenuItem::MenuItem(wstring name, int menu_x, int menu_y, OnClickType on_click)
+	: Name(ToUnicode(name)){
+	InitializeFont();
+	button = ofRectangle(menu_x, menu_y, menuItemWidth, menuItemHeight);
+	OnClick = on_click;
+}
+
+void MenuItem::draw() {
+	ofSetColor(ofColor::royalBlue);
+	ofDrawRectangle(button);
+	ofSetColor(ofColor::black);
+	verdana14.drawString(Name, button.getLeft(),
+		button.getCenter().y);
+	ofSetColor(ofColor::white);
+
+	if (helpOn) { //!!!
+		verdana14.drawString(helpText, 10, 10);
+	}
+}
+
+const size_t menuSize = 3;
+MenuItem menu[menuSize];
+//****************
 
 int target_CPU, target_player;
 
@@ -17,10 +98,14 @@ ofImage img;
 enum Aim {Miss, Goal, Unshot};
 Aim net1[10][10], net2[10][10];
 
+ofSoundPlayer musicPlayer;
+float musicVolumeLevel = 1.0;
+
+ofSoundPlayer effectPlayer;
 //--------------------------------------------------------------
 struct Ship
 {
-	int col_deck;
+	unsigned int col_deck;
 	bool* decks;
 	ofPoint* desp_of_part; // ??? ofPoint2d
 	
@@ -29,7 +114,7 @@ struct Ship
 		decks = NULL;
 		desp_of_part = NULL;
 	}
-	Ship(int n) {
+	Ship(unsigned int n) {
 		col_deck = n;
 		decks = new bool[col_deck];
 		for (int i = 0; i < col_deck; ++i) {
@@ -103,8 +188,7 @@ public:
 Flot CPU(&img);
 Flot* player;
 //--------------------------------------------------------------
-int EndRaund(int n)
-{
+int EndRaund(int n){
 	if (n == 2)
 		ofSystemAlertDialog("Вы победили!");
 	if (n == 1)
@@ -138,8 +222,7 @@ int Scan(Flot* fl, int x, int y) {
 	return 1;
 }
 //--------------------------------------------------------------
-int GoScaning(int x, int y, int n)
-{
+int GoScaning(int x, int y, int n){
 	if (n == 1)
 		if (!Scan(player, x, y))
 			return 0;
@@ -149,8 +232,7 @@ int GoScaning(int x, int y, int n)
 	return 1;
 }
 //--------------------------------------------------------------
-int Missed(int x, int y, int n)
-{
+int Missed(int x, int y, int n){
 	if (n == 1) {
 		x /= 20; y /= 20;
 		net1[x][y] = Aim::Miss;
@@ -175,8 +257,7 @@ int Hit(int x, int y, int n)
 	return 1;
 }
 //--------------------------------------------------------------
-int ShootPlayer(int x, int y, int n)
-{
+int ShootPlayer(int x, int y, int n){
 	if (!play) return 0;
 	if (IsShot(x, y, n))
 	{
@@ -195,7 +276,9 @@ int ShootPlayer(int x, int y, int n)
 		return -1;
 	}
 	Missed(x, y, n);
+	effectPlayer.play();
 	if (n == 2) ofSystemAlertDialog("Мимо! Ход оппонента.");
+	effectPlayer.stop();
 	return 1;
 }
 //--------------------------------------------------------------
@@ -216,7 +299,7 @@ bool FindDirection(int x, int y, int& dx, int& dy) {
 }
 //--------------------------------------------------------------
 ofRectangle BoundingBox(const Ship &sh) {
-	int x1, y1,
+	unsigned int x1, y1,
 		x2, y2;
 	x1 = min(sh.desp_of_part[0].x, sh.desp_of_part[sh.col_deck - 1].x);
 	y1 = min(sh.desp_of_part[0].y, sh.desp_of_part[sh.col_deck - 1].y);
@@ -224,7 +307,7 @@ ofRectangle BoundingBox(const Ship &sh) {
 	x2 = max(sh.desp_of_part[0].x, sh.desp_of_part[sh.col_deck - 1].x) + 1;
 	y2 = max(sh.desp_of_part[0].y, sh.desp_of_part[sh.col_deck - 1].y) + 1;
 
-	int w = x2 - x1,
+	unsigned int w = x2 - x1,
 		h = y2 - y1;
 	return ofRectangle(x1 - 0.5, y1 - 0.5, w + 1, h + 1);
 }
@@ -236,16 +319,20 @@ bool Intersect(const Ship &sh1, const Ship &sh2) {
 }
 //--------------------------------------------------------------
 bool ShipInField(const Ship& sh) {
-	int x2, y2;
+	unsigned int x2, y2;
 
 	x2 = max(sh.desp_of_part[0].x, sh.desp_of_part[sh.col_deck - 1].x) + 1;
 	y2 = max(sh.desp_of_part[0].y, sh.desp_of_part[sh.col_deck - 1].y) + 1;
 	return x2 <= 10 && y2 <= 10;
 }
-
 //--------------------------------------------------------------
-bool CanPlaceShip(Flot* fleet, int col_ship, int col_deck, int x, int y, int button)
-{
+bool CanPlaceShip(Flot* fleet, 
+	unsigned int col_ship, 
+	unsigned int col_deck, 
+	unsigned int x, 
+	unsigned int y, 
+	int button
+){
 	Ship newShip(col_deck);
 
 	if (button == 0)
@@ -267,36 +354,36 @@ bool CanPlaceShip(Flot* fleet, int col_ship, int col_deck, int x, int y, int but
 	return ShipInField(newShip);
 }
 //--------------------------------------------------------------
-int Generation (Flot* CPU, int col_ship, int col_deck)
-{
-	int x1, y1, k, i, j;
-	bool vertical = false, regen;
+int Generation (Flot* CPU, int col_ship, int col_deck){
+	unsigned int x, y;
+	bool vertical = false;
 	srand(time(NULL)); //!!!
 	do {
-		x1 = rand() % 10;
-		y1 = rand() % 10;
-		if (CanPlaceShip(CPU, col_ship, col_deck, x1, y1, 0)) {
+		x = rand() % 10;
+		y = rand() % 10;
+		if (CanPlaceShip(CPU, col_ship, col_deck, x, y, 0)) {
 			vertical = false;
 			break;
 		}
-		if (CanPlaceShip(CPU, col_ship, col_deck, x1, y1, 2)) {
+		if (CanPlaceShip(CPU, col_ship, col_deck, x, y, 2)) {
 			vertical = true;
 			break;
 		}
 	} while (true);
 
+
 	CPU->ship[col_ship].col_deck = col_deck;
 	if (!vertical)
-		for (i = 0; i < col_deck; i++){
+		for (int i = 0; i < col_deck; i++){
 			CPU->ship[col_ship].decks[i] = true;
-			CPU->ship[col_ship].desp_of_part[i].x = x1 + i;
-			CPU->ship[col_ship].desp_of_part[i].y = y1;
+			CPU->ship[col_ship].desp_of_part[i].x = x + i;
+			CPU->ship[col_ship].desp_of_part[i].y = y;
 		}
 	else
-		for (i = 0; i < col_deck; i++){
+		for (int i = 0; i < col_deck; i++){
 			CPU->ship[col_ship].decks[i] = true;
-			CPU->ship[col_ship].desp_of_part[i].x = x1;
-			CPU->ship[col_ship].desp_of_part[i].y = y1 + i;
+			CPU->ship[col_ship].desp_of_part[i].x = x;
+			CPU->ship[col_ship].desp_of_part[i].y = y + i;
 		}
 	return 0;
 }
@@ -311,7 +398,7 @@ void DrawX(int x, int y) {
 }
 //--------------------------------------------------------------
 void player_DrawArea(const Ship& sh) {//!!!	
-	int x1, y1, x2, y2;
+	unsigned int x1, y1, x2, y2;
 
 	x1 = min(sh.desp_of_part[0].x, sh.desp_of_part[sh.col_deck - 1].x);
 	y1 = min(sh.desp_of_part[0].y, sh.desp_of_part[sh.col_deck - 1].y);
@@ -319,13 +406,13 @@ void player_DrawArea(const Ship& sh) {//!!!
 	x2 = max(sh.desp_of_part[0].x, sh.desp_of_part[sh.col_deck - 1].x) + 1;
 	y2 = max(sh.desp_of_part[0].y, sh.desp_of_part[sh.col_deck - 1].y) + 1;
 
-	int w = x2 - x1,
+	unsigned int w = x2 - x1,
 		h = y2 - y1;
 
-	x1 = max(x1 - 1, 0);
-	y1 = max(y1 - 1, 0);
-	x2 = min(x2, 9);
-	y2 = min(y2, 9);
+	x1 = max<unsigned int>(x1 - 1, 0);
+	y1 = max<unsigned int>(y1 - 1, 0);
+	x2 = min<unsigned int>(x2, 9);
+	y2 = min<unsigned int>(y2, 9);
 
 	for (int i = x1; i <= x2; ++i)
 		for (int j = y1; j <= y2; ++j) {
@@ -334,7 +421,7 @@ void player_DrawArea(const Ship& sh) {//!!!
 }
 //--------------------------------------------------------------
 void CPU_DrawArea(const Ship& sh) { //!!!
-	int x1, y1, x2, y2;
+	unsigned int x1, y1, x2, y2;
 
 	x1 = min(sh.desp_of_part[0].x, sh.desp_of_part[sh.col_deck - 1].x);
 	y1 = min(sh.desp_of_part[0].y, sh.desp_of_part[sh.col_deck - 1].y);
@@ -342,14 +429,14 @@ void CPU_DrawArea(const Ship& sh) { //!!!
 	x2 = max(sh.desp_of_part[0].x, sh.desp_of_part[sh.col_deck - 1].x) + 1;
 	y2 = max(sh.desp_of_part[0].y, sh.desp_of_part[sh.col_deck - 1].y) + 1;
 
-	int w = x2 - x1,
+	unsigned int w = x2 - x1,
 		h = y2 - y1;
 	//x1 - 1, y1 - 1, x2 + 1, y2 + 1
 
-	x1 = max(x1 - 1, 0);
-	y1 = max(y1 - 1, 0);
-	x2 = min(x2, 9);
-	y2 = min(y2, 9);
+	x1 = max<unsigned int>(x1 - 1, 0);
+	y1 = max<unsigned int>(y1 - 1, 0);
+	x2 = min<unsigned int>(x2, 9);
+	y2 = min<unsigned int>(y2, 9);
 
 	for (int i = x1; i <= x2; ++i)
 		for (int j = y1; j <= y2; ++j) {
@@ -357,9 +444,52 @@ void CPU_DrawArea(const Ship& sh) { //!!!
 		}
 }
 //-------------------------------------------------------------------------------
+void OnClick_play() {
+	showMenu = false;
+}
+//-------------------------------------------------------------------------------
+void OnClick_exit() {
+	ofExit();
+}
+//--------------------------------------------------------------
+void OnClick_help() {
+	if (helpOn) {
+		helpOn = false;
+		return;
+	}
+	helpOn = true;
+	wifstream InputFile("data/help.txt");
+	assert(InputFile.is_open());
+	wstring line;
+	InputFile >> line;
+	helpText = ToUnicode(line);
+}
+//--------------------------------------------------------------
 void ofApp::setup() {
-	setlocale(LC_ALL, "RU");
-	img.load("net.png");
+	//setlocale(LC_ALL, "RU");
+
+	//*********MENU********** 
+	wstring names[] = { L"Играть", L"Помощь", L"Выход" };
+	OnClickType on_click[] = {&OnClick_play, &OnClick_help, &OnClick_exit};
+
+	for (int i = 0; i < menuSize; ++i) {
+		int menu_x = ofGetWindowWidth() / 2 - MenuItem::menuItemWidth / 2;
+		int menu_y = ofGetWindowHeight() / 2 - i * MenuItem::menuItemHeight;
+		menu[i] = MenuItem(names[i], menu_x, menu_y, on_click[i]);
+	}
+
+	//musicPlayer.load("main_menu_music.mp3");
+	//assert(musicPlayer.isLoaded());
+	//musicPlayer.setLoop(true);
+	//musicPlayer.setMultiPlay(true);
+	//musicPlayer.play();
+
+	effectPlayer.load("miss.mp3");
+	effectPlayer.setMultiPlay(true);
+	assert(effectPlayer.isLoaded());
+
+	bool isLoaded = img.load("net.png");
+	assert(isLoaded);
 
 	col_ship = 0; //!!!
 	col_deck = 4;
@@ -390,6 +520,7 @@ void ofApp::setup() {
 }
 //--------------------------------------------------------------
 void ofApp::update() {
+	ofSoundUpdate();
 	if (game_over) return;
 	if (cpu_turn) {
 		static char state = 'A';
@@ -495,6 +626,16 @@ void ofApp::update() {
 }
 //--------------------------------------------------------------
 void ofApp::draw(){
+	if (showMenu) {
+
+		for (int i = 0; i < menuSize; ++i) {
+			menu[i].draw();
+		}
+		return;
+	}
+
+
+	ofDrawBitmapString("Volume: " + ofToString(musicVolumeLevel), 250, 250);
 	img.draw(offset, 0);
 
 	for (int s = 0; s < 10; ++s) {
@@ -546,15 +687,24 @@ void ofApp::draw(){
 
 		for (int d = 0; d < nDecks; ++d) {
 			if (player->ship[s].decks[d]) {
-				ofSetColor(ofColor::red);
+				ofSetColor(ofColor::darkRed);
 			}
 			else {
 				ofSetColor(ofColor::yellow);
 			}
+			//Sheep deck
+			ofFill();
+			ofDrawRectangle(
+				player->ship[s].desp_of_part[d].x * 20,
+				player->ship[s].desp_of_part[d].y * 20, 20, 20);
+			ofNoFill();
+			//Contour
+			ofSetColor(ofColor::red);
 			ofDrawRectangle(
 				player->ship[s].desp_of_part[d].x * 20,
 				player->ship[s].desp_of_part[d].y * 20, 20, 20);
 			ofSetColor(ofColor::white);
+			ofFill();
 		}
 	}
 
@@ -584,19 +734,31 @@ void ofApp::draw(){
 }
 //--------------------------------------------------------------
 void ofApp::keyPressed(int key){
+	
+	if (key == '-') {
+		musicVolumeLevel = max<float>(0, musicVolumeLevel - 0.1);
+		musicPlayer.setVolume(musicVolumeLevel);
+	}
+
+	if (key == '+') {
+		musicVolumeLevel = min<float>(1.0, musicVolumeLevel + 0.1);
+		musicPlayer.setVolume(musicVolumeLevel);
+	}
 }
 //--------------------------------------------------------------
 void ofApp::keyReleased(int key){
+
 }
 //--------------------------------------------------------------
 void ofApp::mouseMoved(int x, int y){
 
 }
 //--------------------------------------------------------------
-void ofApp::mouseDragged(int x, int y, int button){}
+void ofApp::mouseDragged(int x, int y, int button){
+
+}
 //--------------------------------------------------------------
-void Shoot(int x, int y)
-{
+void Shoot(int x, int y){
 	if (game_over) return;
 	
 	int shoot_result = ShootPlayer(x, y, 2);
@@ -612,7 +774,17 @@ void Shoot(int x, int y)
 }
 //--------------------------------------------------------------
 void ofApp::mousePressed(int x, int y, int button){
+	if (showMenu) {
+		for (int i = 0; i < menuSize; ++i) {
+			if (menu[i].includes(x, y)) {
+				menu[i].OnClick();
+				return;
+			}
+		}
+	}
+
 	if (cpu_turn) return;
+	
 	if (play) {
 		Shoot(x, y);
 		return;
