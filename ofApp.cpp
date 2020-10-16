@@ -103,8 +103,7 @@ float musicVolumeLevel = 1.0;
 
 ofSoundPlayer effectPlayer;
 //--------------------------------------------------------------
-struct Ship
-{
+struct Ship{
 	unsigned int col_deck;
 	bool* decks;
 	ofPoint* desp_of_part; // ??? ofPoint2d
@@ -458,11 +457,25 @@ void OnClick_help() {
 		return;
 	}
 	helpOn = true;
-	wifstream InputFile("data/help.txt");
+	helpText.clear();
+	ifstream InputFile("data/help.txt");
 	assert(InputFile.is_open());
-	wstring line;
-	InputFile >> line;
-	helpText = ToUnicode(line);
+	while (InputFile) {
+		string utf8;
+		std::getline(InputFile, utf8);
+
+		const int textWidth = 35;
+
+		size_t i = 0;
+		for (auto c : ofUTF8Iterator(utf8)) {
+			if (i % textWidth == 0) {
+				ofUTF8Append(helpText, '\n');
+			}
+			ofUTF8Append(helpText, c);
+			i++;
+		}
+		ofUTF8Append(helpText, '\n');
+	}
 }
 //--------------------------------------------------------------
 void ofApp::setup() {
